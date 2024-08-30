@@ -1,0 +1,101 @@
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <bits/stdc++.h>
+#include <condition_variable>
+#include <thread>
+#include <stdexcept>
+#include <chrono>
+
+using namespace std;
+
+class CountingSemaphore{
+    public:
+        CountingSemaphore(int maxCount) : maxCount(maxCount), usedPermits(0) {}
+        CountingSemaphore(int maxCount, int initialPermits) : maxCount(maxCount), usedPermits(maxCount-initialPermits){}
+        
+        void acquire()
+        {
+            unique_lock<mutex> lock(mtx);
+            cv_not_full.wait(lock,[this]{return usedPermits<maxCount;});
+            usedPermits++;
+            cv_not_empty.notify_one();
+        }
+        
+        void release(){
+            unique_lock<mutex> lock(mtx);
+            cv_not_empty.wait(lock,[this]{return usedPermits>0};);
+            usedPermits--;
+            cv_not_full.notify_one();
+        }
+    private:
+        mutex mtx;
+        condition_variable cv_not_full;
+        condition_variable cv_not_empty;
+        int usedPermits;
+        int maxCount
+        
+};
+
+class BlockingQueueWithSemaphore{
+    public:
+        BlockingQueueWithSemaphore(int capacity) : capacity(capacity), semProducer(capacity),semConsumer(capacity,capacity){};
+
+        void enqueue(int item)
+        {
+            semProducer.acquire();
+            unique_lock<mutex> lock(semLock);
+            
+            q.push(move(item));
+            
+            semConsumer.release();
+        }
+        
+        int dequeue()
+        {
+            semConsumer.acquire();
+            unique_lock<mutex> lock(semLock);
+            
+            int item = move(q.front());
+            q.pop();
+            
+            semProducer.release();
+        }
+    private:
+        int capacity;
+        mutex semLock;
+        CountingSemaphore semConsumer;
+        CountingSemaphore semProducer;
+        queue<int> q;
+};
+
+void producer(BlockingQueueWithSemaphore &bq)
+{
+    for(int i=0;i<20;i++)
+    {
+        bq.enqueue(i);
+        cout << "Producing : " << i << endl;
+        this_thread::sleep_for(chrono::milliseconds(100));
+    }
+    
+}
+
+void consumer(BoundedBlockingQueue &bq) {
+    for (int i = 0; i < 100; ++i) {
+        int item = bq.dequeue();
+        cout << "Consuming: " << item << endl;
+        this_thread::sleep_for(chrono::milliseconds(150));
+    }
+}
+
+int main() {
+    BlockingQueueWithSemaphore bq(3);
+
+    thread t1(producer, ref(bq));
+    thread t2(consumer, ref(bq));
+
+    t1.join();
+    t2.join();
+
+    return 0;
+}
